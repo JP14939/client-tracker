@@ -1,33 +1,54 @@
-import { useState } from 'react'
-import { getItem, setItem } from '../utils/storage'
+import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
 import { generateId } from '../utils/ids'
 
-const KEY = 'ct_pings'
+function fromDb(row) {
+  if (!row) return null
+  const { client_id, client_name, ...rest } = row
+  return { ...rest, clientId: client_id, clientName: client_name }
+}
 
 export function usePings() {
-  const [pings, setPings] = useState(() => getItem(KEY) ?? [])
+  const [pings, setPings] = useState([])
 
-  function save(updater) {
-    setPings(prev => {
-      const updated = typeof updater === 'function' ? updater(prev) : updater
-      setItem(KEY, updated)
-      return updated
-    })
+  useEffect(() => {
+    supabase.from('pings').select('*').order('date', { ascending: false })
+      .then(({ data }) => setPings((data ?? []).map(fromDb)))
+
+    // Real-time: new pings appear instantly for the producer
+    const channel = supabase
+      .channel('pings')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'pings' }, ({ new: row }) => {
+        setPings(prev => [fromDb(row), ...prev])
+      })
+      .subscribe()
+
+    return () => supabase.removeChannel(channel)
+  }, [])
+
+  async function sendPing(clientId, clientName, message) {
+    const row = {
+      id: generateId(),
+      client_id: clientId,
+      client_name: clientName,
+      message,
+      date: new Date().toISOString(),
+      read: false,
+    }
+    await supabase.from('pings').insert(row)
+    // real-time subscription handles adding to state on producer side
+    // on client side, optimistic update:
+    setPings(prev => [fromDb(row), ...prev])
   }
 
-  function sendPing(clientId, clientName, message) {
-    save(prev => [
-      { id: generateId(), clientId, clientName, message, date: new Date().toISOString(), read: false },
-      ...prev,
-    ])
+  async function markRead(id) {
+    await supabase.from('pings').update({ read: true }).eq('id', id)
+    setPings(prev => prev.map(p => p.id === id ? { ...p, read: true } : p))
   }
 
-  function markRead(id) {
-    save(prev => prev.map(p => p.id === id ? { ...p, read: true } : p))
-  }
-
-  function markAllRead() {
-    save(prev => prev.map(p => ({ ...p, read: true })))
+  async function markAllRead() {
+    await supabase.from('pings').update({ read: true }).eq('read', false)
+    setPings(prev => prev.map(p => ({ ...p, read: true })))
   }
 
   const unreadCount = pings.filter(p => !p.read).length

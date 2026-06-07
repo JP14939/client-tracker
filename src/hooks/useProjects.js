@@ -1,50 +1,51 @@
-import { useState } from 'react';
-import { getItem, setItem } from '../utils/storage';
-import { generateId } from '../utils/ids';
+import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
+import { generateId } from '../utils/ids'
 
-const PROJECTS_KEY = 'ct_projects';
-const TIME_ENTRIES_KEY = 'ct_time_entries';
-const MILESTONES_KEY = 'ct_milestones';
+function fromDb(row) {
+  if (!row) return null
+  const { client_id, created_at, ...rest } = row
+  return { ...rest, clientId: client_id, createdAt: created_at }
+}
+
+function toDb(obj) {
+  const { clientId, createdAt, id, ...rest } = obj
+  return {
+    ...rest,
+    ...(clientId !== undefined && { client_id: clientId }),
+    ...(createdAt !== undefined && { created_at: createdAt }),
+  }
+}
 
 export function useProjects() {
-  const [projects, setProjects] = useState(() => getItem(PROJECTS_KEY) ?? []);
+  const [projects, setProjects] = useState([])
 
-  function addProject(data) {
-    const newProject = { id: generateId(), createdAt: new Date().toISOString(), ...data };
-    setProjects(prev => {
-      const updated = [...prev, newProject];
-      setItem(PROJECTS_KEY, updated);
-      return updated;
-    });
+  useEffect(() => {
+    supabase.from('projects').select('*').order('created_at')
+      .then(({ data }) => setProjects((data ?? []).map(fromDb)))
+  }, [])
+
+  async function addProject(data) {
+    const row = { id: generateId(), created_at: new Date().toISOString(), ...toDb(data) }
+    const { data: saved } = await supabase.from('projects').insert(row).select().single()
+    if (saved) setProjects(prev => [...prev, fromDb(saved)])
   }
 
-  function updateProject(id, data) {
-    setProjects(prev => {
-      const updated = prev.map(p => (p.id === id ? { ...p, ...data } : p));
-      setItem(PROJECTS_KEY, updated);
-      return updated;
-    });
+  async function updateProject(id, data) {
+    const { data: saved } = await supabase.from('projects').update(toDb(data)).eq('id', id).select().single()
+    if (saved) setProjects(prev => prev.map(p => p.id === id ? fromDb(saved) : p))
   }
 
-  function deleteProject(id) {
-    setProjects(prev => {
-      const updated = prev.filter(p => p.id !== id);
-      setItem(PROJECTS_KEY, updated);
-      return updated;
-    });
-
-    const timeEntries = getItem(TIME_ENTRIES_KEY) ?? [];
-    setItem(TIME_ENTRIES_KEY, timeEntries.filter(e => e.projectId !== id));
-
-    const milestones = getItem(MILESTONES_KEY) ?? [];
-    setItem(MILESTONES_KEY, milestones.filter(m => m.projectId !== id));
+  async function deleteProject(id) {
+    await supabase.from('projects').delete().eq('id', id)
+    setProjects(prev => prev.filter(p => p.id !== id))
   }
 
   function getProjectsByClient(clientId) {
-    return projects.filter(p => p.clientId === clientId);
+    return projects.filter(p => p.clientId === clientId)
   }
 
-  return { projects, addProject, updateProject, deleteProject, getProjectsByClient };
+  return { projects, addProject, updateProject, deleteProject, getProjectsByClient }
 }
 
-export default useProjects;
+export default useProjects

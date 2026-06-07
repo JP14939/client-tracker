@@ -1,83 +1,64 @@
-import { useState } from 'react';
-import { getItem, setItem } from '../utils/storage';
-import { generateId } from '../utils/ids';
+import { useState, useEffect } from 'react'
+import { supabase } from '../lib/supabase'
+import { generateId } from '../utils/ids'
 
-const CLIENTS_KEY = 'ct_clients';
-const PROJECTS_KEY = 'ct_projects';
-const TIME_ENTRIES_KEY = 'ct_time_entries';
-const MILESTONES_KEY = 'ct_milestones';
+function fromDb(row) {
+  if (!row) return null
+  const { created_at, ...rest } = row
+  return { ...rest, createdAt: created_at }
+}
+
+function toDb(obj) {
+  const { createdAt, id, ...rest } = obj
+  return { ...rest, ...(createdAt !== undefined && { created_at: createdAt }) }
+}
 
 export function useClients() {
-  const [clients, setClients] = useState(() => getItem(CLIENTS_KEY) ?? []);
+  const [clients, setClients] = useState([])
 
-  function addClient(data) {
-    const newClient = { id: generateId(), createdAt: new Date().toISOString(), notes: [], ...data };
-    setClients(prev => {
-      const updated = [...prev, newClient];
-      setItem(CLIENTS_KEY, updated);
-      return updated;
-    });
+  useEffect(() => {
+    supabase.from('clients').select('*').order('created_at')
+      .then(({ data }) => setClients((data ?? []).map(fromDb)))
+  }, [])
+
+  async function addClient(data) {
+    const row = { id: generateId(), created_at: new Date().toISOString(), notes: [], ...toDb(data) }
+    const { data: saved } = await supabase.from('clients').insert(row).select().single()
+    if (saved) setClients(prev => [...prev, fromDb(saved)])
   }
 
-  function updateClient(id, data) {
-    setClients(prev => {
-      const updated = prev.map(c => (c.id === id ? { ...c, ...data } : c));
-      setItem(CLIENTS_KEY, updated);
-      return updated;
-    });
+  async function updateClient(id, data) {
+    const { data: saved } = await supabase.from('clients').update(toDb(data)).eq('id', id).select().single()
+    if (saved) setClients(prev => prev.map(c => c.id === id ? fromDb(saved) : c))
   }
 
-  function deleteClient(id) {
-    setClients(prev => {
-      const updatedClients = prev.filter(c => c.id !== id);
-      setItem(CLIENTS_KEY, updatedClients);
-      return updatedClients;
-    });
-
-    const projects = getItem(PROJECTS_KEY) ?? [];
-    const deletedProjectIds = new Set(
-      projects.filter(p => p.clientId === id).map(p => p.id)
-    );
-    const updatedProjects = projects.filter(p => p.clientId !== id);
-    setItem(PROJECTS_KEY, updatedProjects);
-
-    const timeEntries = getItem(TIME_ENTRIES_KEY) ?? [];
-    setItem(TIME_ENTRIES_KEY, timeEntries.filter(e => !deletedProjectIds.has(e.projectId)));
-
-    const milestones = getItem(MILESTONES_KEY) ?? [];
-    setItem(MILESTONES_KEY, milestones.filter(m => !deletedProjectIds.has(m.projectId)));
+  async function deleteClient(id) {
+    await supabase.from('clients').delete().eq('id', id)
+    setClients(prev => prev.filter(c => c.id !== id))
   }
 
   function getClientById(id) {
-    return clients.find(c => c.id === id);
+    return clients.find(c => c.id === id)
   }
 
-  function addClientNote(clientId, text) {
-    const note = { id: generateId(), text, date: new Date().toISOString() };
-    setClients(prev => {
-      const updated = prev.map(c => {
-        if (c.id !== clientId) return c;
-        const existing = Array.isArray(c.notes) ? c.notes : [];
-        return { ...c, notes: [note, ...existing] };
-      });
-      setItem(CLIENTS_KEY, updated);
-      return updated;
-    });
+  async function addClientNote(clientId, text) {
+    const client = clients.find(c => c.id === clientId)
+    if (!client) return
+    const note = { id: generateId(), text, date: new Date().toISOString() }
+    const newNotes = [note, ...(Array.isArray(client.notes) ? client.notes : [])]
+    const { data: saved } = await supabase.from('clients').update({ notes: newNotes }).eq('id', clientId).select().single()
+    if (saved) setClients(prev => prev.map(c => c.id === clientId ? fromDb(saved) : c))
   }
 
-  function deleteClientNote(clientId, noteId) {
-    setClients(prev => {
-      const updated = prev.map(c => {
-        if (c.id !== clientId) return c;
-        const existing = Array.isArray(c.notes) ? c.notes : [];
-        return { ...c, notes: existing.filter(n => n.id !== noteId) };
-      });
-      setItem(CLIENTS_KEY, updated);
-      return updated;
-    });
+  async function deleteClientNote(clientId, noteId) {
+    const client = clients.find(c => c.id === clientId)
+    if (!client) return
+    const newNotes = (Array.isArray(client.notes) ? client.notes : []).filter(n => n.id !== noteId)
+    const { data: saved } = await supabase.from('clients').update({ notes: newNotes }).eq('id', clientId).select().single()
+    if (saved) setClients(prev => prev.map(c => c.id === clientId ? fromDb(saved) : c))
   }
 
-  return { clients, addClient, updateClient, deleteClient, getClientById, addClientNote, deleteClientNote };
+  return { clients, addClient, updateClient, deleteClient, getClientById, addClientNote, deleteClientNote }
 }
 
-export default useClients;
+export default useClients

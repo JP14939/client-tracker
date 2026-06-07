@@ -3,31 +3,48 @@ import { FileText, Wifi, WifiOff, Loader } from 'lucide-react'
 import Modal from '../../components/Modal/Modal'
 import Button from '../../components/Button/Button'
 import { exportClientToPDF } from '../../hooks/useExport'
-import { getItem } from '../../utils/storage'
+import { supabase } from '../../lib/supabase'
 
 export default function ExportClientModal({ isOpen, onClose, clientId }) {
   const [ollamaStatus, setOllamaStatus] = useState('checking') // checking | online | offline
   const [progress, setProgress] = useState('')
   const [loading, setLoading] = useState(false)
+  const [client, setClient] = useState(null)
+  const [clientProjects, setClientProjects] = useState([])
+  const [clientEntries, setClientEntries] = useState([])
 
   useEffect(() => {
-    if (!isOpen) { setOllamaStatus('checking'); setProgress(''); return }
+    if (!isOpen || !clientId) { setOllamaStatus('checking'); setProgress(''); return }
     setOllamaStatus('checking')
+
+    // Ollama check
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), 3000)
     fetch('/ollama/api/tags', { signal: ctrl.signal })
       .then(r => { clearTimeout(timer); return r.ok ? r.json() : Promise.reject() })
       .then(data => setOllamaStatus(data.models?.length > 0 ? 'online' : 'offline'))
       .catch(() => setOllamaStatus('offline'))
-  }, [isOpen])
 
-  // preview data
-  const clients = getItem('ct_clients') ?? []
-  const projects = getItem('ct_projects') ?? []
-  const entries = getItem('ct_time_entries') ?? []
-  const client = clients.find(c => c.id === clientId)
-  const clientProjects = projects.filter(p => p.clientId === clientId)
-  const clientEntries = entries.filter(e => clientProjects.some(p => p.id === e.projectId))
+    // Load preview data from Supabase
+    async function loadPreview() {
+      const { data: clientRow } = await supabase.from('clients').select('*').eq('id', clientId).single()
+      if (clientRow) setClient({ ...clientRow, createdAt: clientRow.created_at })
+
+      const { data: projectRows } = await supabase.from('projects').select('*').eq('client_id', clientId)
+      const projs = (projectRows ?? []).map(r => ({ ...r, clientId: r.client_id }))
+      setClientProjects(projs)
+
+      const ids = projs.map(p => p.id)
+      if (ids.length) {
+        const { data: entryRows } = await supabase.from('time_entries').select('*').in('project_id', ids)
+        setClientEntries((entryRows ?? []).map(r => ({ ...r, projectId: r.project_id })))
+      } else {
+        setClientEntries([])
+      }
+    }
+    loadPreview()
+  }, [isOpen, clientId])
+
   const totalHours = clientEntries.reduce((s, e) => s + (e.hours || 0), 0)
   const notes = Array.isArray(client?.notes) ? client.notes : []
 

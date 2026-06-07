@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LogOut, Send } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { usePings } from '../../hooks/usePings'
-import { getItem } from '../../utils/storage'
+import { supabase } from '../../lib/supabase'
 import { formatDate, formatHours } from '../../utils/formatters'
 import Badge from '../../components/Badge/Badge'
 
@@ -13,13 +13,29 @@ export default function ClientPortal() {
   const [message, setMessage] = useState('')
   const [sent, setSent] = useState(false)
   const navigate = useNavigate()
+  const [client, setClient] = useState(null)
+  const [clientProjects, setClientProjects] = useState([])
+  const [timeEntries, setTimeEntries] = useState([])
 
-  const clients = getItem('ct_clients') ?? []
-  const projects = getItem('ct_projects') ?? []
-  const timeEntries = getItem('ct_time_entries') ?? []
+  useEffect(() => {
+    if (!session?.clientId) return
+    async function load() {
+      const { data: clientRow } = await supabase.from('clients').select('*').eq('id', session.clientId).single()
+      if (clientRow) setClient({ ...clientRow, createdAt: clientRow.created_at })
 
-  const client = clients.find(c => c.id === session?.clientId)
-  const clientProjects = projects.filter(p => p.clientId === session?.clientId)
+      const { data: projectRows } = await supabase.from('projects').select('*').eq('client_id', session.clientId)
+      const projs = (projectRows ?? []).map(r => ({ ...r, clientId: r.client_id }))
+      setClientProjects(projs)
+
+      const ids = projs.map(p => p.id)
+      if (ids.length) {
+        const { data: entryRows } = await supabase.from('time_entries').select('*').in('project_id', ids)
+        setTimeEntries((entryRows ?? []).map(r => ({ ...r, projectId: r.project_id })))
+      }
+    }
+    load()
+  }, [session?.clientId])
+
   const notes = Array.isArray(client?.notes) ? [...client.notes].sort((a, b) => new Date(b.date) - new Date(a.date)) : []
 
   function handlePing(e) {

@@ -1,5 +1,5 @@
 import { jsPDF } from 'jspdf'
-import { getItem } from '../utils/storage'
+import { supabase } from '../lib/supabase'
 import { formatDate } from '../utils/formatters'
 
 function formatNoteDate(iso) {
@@ -76,17 +76,16 @@ function pageBreak(doc, y, needed = 18) {
 }
 
 export async function exportClientToPDF(clientId, onProgress) {
-  const clients = getItem('ct_clients') ?? []
-  const projects = getItem('ct_projects') ?? []
-  const timeEntries = getItem('ct_time_entries') ?? []
+  const { data: clientRow } = await supabase.from('clients').select('*').eq('id', clientId).single()
+  if (!clientRow) return
+  const client = { ...clientRow, createdAt: clientRow.created_at }
 
-  const client = clients.find(c => c.id === clientId)
-  if (!client) return
+  const { data: projectRows } = await supabase.from('projects').select('*').eq('client_id', clientId)
+  const clientProjects = (projectRows ?? []).map(r => ({ ...r, clientId: r.client_id, createdAt: r.created_at }))
 
-  const clientProjects = projects.filter(p => p.clientId === clientId)
-  const clientEntries = timeEntries.filter(e =>
-    clientProjects.some(p => p.id === e.projectId)
-  )
+  const projectIds = clientProjects.map(p => p.id)
+  const { data: entryRows } = await supabase.from('time_entries').select('*').in('project_id', projectIds.length ? projectIds : ['none'])
+  const clientEntries = (entryRows ?? []).map(r => ({ ...r, projectId: r.project_id }))
   const notes = Array.isArray(client.notes) ? client.notes : []
   const totalHours = clientEntries.reduce((sum, e) => sum + (e.hours || 0), 0)
 

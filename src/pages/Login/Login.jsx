@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Lock, User } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
-import { getItem } from '../../utils/storage'
+import { supabase } from '../../lib/supabase'
 
 export default function Login() {
   const [role, setRole] = useState('producer')
@@ -51,11 +51,11 @@ export default function Login() {
     }
   }
 
-  function handleClient(e) {
+  async function handleClient(e) {
     e.preventDefault()
     setError('')
-    const clients = getItem('ct_clients') ?? []
-    const match = clients.find(c => c.name.toLowerCase() === clientName.trim().toLowerCase())
+    const { data: clients } = await supabase.from('clients').select('id,name').ilike('name', clientName.trim())
+    const match = (clients ?? []).find(c => c.name.toLowerCase() === clientName.trim().toLowerCase())
     if (!match) { setError('No client found with that name. Contact your producer.'); return }
     loginClient(match.id, match.name)
     navigate('/portal', { replace: true })
@@ -118,14 +118,14 @@ export default function Login() {
         {/* Producer form */}
         {role === 'producer' && (
           <form onSubmit={handleProducer}>
-            <label style={labelStyle}>Your name</label>
+            <label style={labelStyle}>Username</label>
             <div style={{ position: 'relative', marginBottom: 16 }}>
               <User size={13} style={iconStyle} />
               <input
                 type="text"
                 value={producerName}
                 onChange={e => setProducerName(e.target.value)}
-                placeholder="Enter your name"
+                placeholder="Enter your username"
                 required
                 autoFocus
                 style={inputWithIcon}
