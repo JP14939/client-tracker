@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Lock, User } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
@@ -10,15 +10,45 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [clientName, setClientName] = useState('')
   const [error, setError] = useState('')
+  const [attempts, setAttempts] = useState(0)
+  const [lockedUntil, setLockedUntil] = useState(null)
   const { loginProducer, loginClient } = useAuth()
   const navigate = useNavigate()
 
+  const MAX_ATTEMPTS = 5
+  const LOCKOUT_SECONDS = 30
+
+  const [, forceUpdate] = useState(0)
+  useEffect(() => {
+    if (!lockedUntil) return
+    const id = setInterval(() => {
+      if (Date.now() >= lockedUntil) { setLockedUntil(null); clearInterval(id) }
+      else forceUpdate(n => n + 1)
+    }, 1000)
+    return () => clearInterval(id)
+  }, [lockedUntil])
+
+  const isLocked = lockedUntil && Date.now() < lockedUntil
+  const lockSecondsLeft = isLocked ? Math.ceil((lockedUntil - Date.now()) / 1000) : 0
+
   function handleProducer(e) {
     e.preventDefault()
+    if (isLocked) return
     setError('')
     const ok = loginProducer(producerName, password)
-    if (ok) navigate('/', { replace: true })
-    else setError('Incorrect password.')
+    if (ok) {
+      navigate('/', { replace: true })
+    } else {
+      const next = attempts + 1
+      setAttempts(next)
+      if (next >= MAX_ATTEMPTS) {
+        setLockedUntil(Date.now() + LOCKOUT_SECONDS * 1000)
+        setAttempts(0)
+        setError(`Too many attempts. Try again in ${LOCKOUT_SECONDS} seconds.`)
+      } else {
+        setError(`Incorrect password. ${MAX_ATTEMPTS - next} attempt${MAX_ATTEMPTS - next === 1 ? '' : 's'} remaining.`)
+      }
+    }
   }
 
   function handleClient(e) {
@@ -114,7 +144,9 @@ export default function Login() {
               />
             </div>
             {error && <p style={errorStyle}>{error}</p>}
-            <button type="submit" style={submitStyle}>Sign In</button>
+            <button type="submit" disabled={isLocked} style={{ ...submitStyle, ...(isLocked ? { opacity: 0.45, cursor: 'not-allowed' } : {}) }}>
+              {isLocked ? `Locked (${lockSecondsLeft}s)` : 'Sign In'}
+            </button>
           </form>
         )}
 
